@@ -51,6 +51,12 @@
     <ClInclude Include="EfficacyUtil.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="TraversalIface.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="ThreadPolicy.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="IAArena.cpp">

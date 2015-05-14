@@ -32,7 +32,7 @@ namespace dstruct
 #ifdef _STRICT_CHECKS
 			if (has_node_labeled<TO>(to, label))
 			{
-				throw foundation::foundation_exception("swapping into existing node!", "swap_node');
+				throw foundation::foundation_exception("swapping into existing node!", "swap_node");
 			}
 #endif
 			// Detach and reattach

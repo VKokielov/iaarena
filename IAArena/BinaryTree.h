@@ -1,9 +1,11 @@
-#ifndef _IA_BINARY_TREE_H_
+#ifndef _IA_BINARY_TREE_H_F
 #define _IA_BINARY_TREE_H_
 
 #include <iosfwd>
 #include <atomic>
 #include "FError.h"
+#include "TraversalIface.h"
+#include "ThreadPolicy.h"
 
 namespace dstruct
 {
@@ -14,57 +16,76 @@ namespace dstruct
 		enum ichild {CHILD_PRE = -1, 
 			CHILD_LEFT = 0, 
 			CHILD_RIGHT = 1, 
-			CHILD_FINAL = 2};
-
-		enum ilabel {
-			LABEL_PARENT = -2,  // to avoid confusion
-			LABEL_LEFT = 0,
-			LABEL_RIGHT = 1
+			CHILD_FINAL = 3  // a parent is not a child
 		};
 
+		enum ilabel {
+			LABEL_INVALID = -2,
+			LABEL_LEFT = 0,
+			LABEL_RIGHT = 1,
+			LABEL_PARENT = 2  // to avoid confusion
+		};
+
+		template<typename ThreadPolicy = foundation::tp_single_thread>
 		struct node
 		{
+			using sequence_t = typename foundation::atomique<ThreadPolicy,unsigned long>::type;
 			long m_key;
-			node* m_children[2];  // binary, hence two
-			std::atomic<unsigned long> m_sequence;
+			node* m_edges[3];  // three -- left-child, right-child, parent
+			sequence_t m_sequence;
 
 			node()
 				:m_key(0),
-				m_children{ nullptr, nullptr },
 				m_sequence(0)
-			{}
+			{
+				m_edges[LABEL_LEFT] = m_edges[LABEL_RIGHT] = m_edges[LABEL_PARENT] = nullptr;
+			}
 		};
 
+		template<typename ThreadPolicy = foundation::tp_single_thread>
 		struct ops
 		{
-			using node_handle = node*;
+			using mnode = node<ThreadPolicy>;
+			using node_handle = mnode*;
 			using node_index = ichild;
 			using node_label = ilabel;
+			using sequence = typename mnode::sequence_t;
 
-			static const ilabel sm_lbl_parent = LABEL_PARENT;
+			static const ilabel sm_parent_lbl = LABEL_PARENT;
+			static const ilabel sm_invalid_lbl = LABEL_INVALID;
 
-			using node_sequence = std::atomic<unsigned long>;
+			static inline void check_label(ilabel lbl, const char* context)
+			{
+				if (lbl != LABEL_LEFT && lbl != LABEL_RIGHT && lbl != LABEL_PARENT)
+				{
+					std::string exc_c("bin_tree_ops::");
+					exc_c.append(context);
+					throw foundation::foundation_exception("label not valid", exc_c.c_str());
+				}
+			}
 
-			static inline bool is_index_pre(node*, ichild idx) { return idx == CHILD_PRE; }
+			static inline bool is_null(mnode* n) { return n == nullptr; }
+			static inline bool is_index_pre(mnode*, ichild idx) { return idx == CHILD_PRE; }
+			static inline sequence get_seq(mnode* n) { return n->m_sequence; }
 
-			static inline bool is_index_first(node* n, ichild idx) {
-				if (n->m_children[CHILD_LEFT]) {
+			static inline bool is_index_first(mnode* n, ichild idx) {
+				if (n->m_edges[CHILD_LEFT]) {
 					return idx == CHILD_LEFT;
 				}
 
-				else if (n->m_children[CHILD_RIGHT]) {
+				else if (n->m_edges[CHILD_RIGHT]) {
 					return idx == CHILD_RIGHT;
 				}
 				// No first child in a childless tree
 				return false;
 			}
 
-			static inline bool is_index_post(node* n, ichild idx) {
-				if (n->m_children[CHILD_RIGHT]) {
+			static inline bool is_index_post(mnode* n, ichild idx) {
+				if (n->m_edges[CHILD_RIGHT]) {
 					return idx == CHILD_RIGHT;
 				}
 				else {
-					if (n->m_children[CHILD_LEFT]) {
+					if (n->m_edges[CHILD_LEFT]) {
 						return idx == CHILD_LEFT;
 					}
 					else {
@@ -73,20 +94,20 @@ namespace dstruct
 				}
 			}
 
-			static inline bool is_index_final(node*, ichild idx)
+			static inline bool is_index_final(mnode*, ichild idx)
 			{
 				return idx == CHILD_FINAL;
 			}
 
-			static inline bool is_leaf(node* n)
+			static inline bool is_leaf(mnode* n)
 			{
-				return n->m_children[CHILD_LEFT] == nullptr
-					&& n->m_children[CHILD_RIGHT] == nullptr;
+				return n->m_edges[CHILD_LEFT] == nullptr
+					&& n->m_edges[CHILD_RIGHT] == nullptr;
 			}
 			
-			static inline int tree_depth(node* n) { return 0; }
+			static inline int tree_depth(mnode* n) { return 0; }
 
-			static inline void init_child_index(node* n, ichild& idx)
+			static inline void init_child_index(mnode* n, ichild& idx)
 			{
 				idx = CHILD_PRE;
 			}
@@ -98,9 +119,10 @@ namespace dstruct
 				case CHILD_LEFT: return CHILD_RIGHT;
 				case CHILD_RIGHT: return CHILD_FINAL;
 				}
+				return CHILD_FINAL;
 			}
 			
-			static inline void increment_index(node* n, ichild& idx)
+			static inline void increment_index(mnode* n, ichild& idx)
 			{
 #ifdef _STRICT_CHECKS
 				if (idx >= CHILD_FINAL) {
@@ -110,109 +132,189 @@ namespace dstruct
 				// (1) Get the next value
 				idx = get_next_index(idx);
 
-				while (idx != CHILD_FINAL && n->m_children[idx] == nullptr)
+				while (idx != CHILD_FINAL && n->m_edges[idx] == nullptr)
 				{
 					idx = get_next_index(idx);
 				}
 			}
 
-			static inline EExists peek_node_labeled(node* n, ichild label)
-			{
-				if (label == LABEL_PARENT) {
-					return EUNKNOWN;  
-				} else {
-					return n->m_children[label] != nullptr ? EXISTS : UNEXISTS;
-				}
-			}
-
-
-			static inline node* get_node_labeled(node* n, ilabel lbl)
+			// This function is used when we need to peek a mnode without getting it
+			static inline EExists peek_node_labeled(mnode* n, ilabel label)
 			{
 #ifdef _STRICT_CHECKS
-				try {
-					return get_node_at_index(n, label);
-				}
-				catch (foundation::foundation_exception ob)
-				{
-					throw foundation::foundation_exception(ob, "bintree_ops::get_node_at_label");
-				}
-#else
-				return get_node_at_index(n, label);
+				check_label(label, "peek_node_labeled");
 #endif
+				return n->m_edges[label] != nullptr ? EXISTS : UNEXISTS;
 			}
 
-			static inline node* get_node_at_index(node* n, ichild idx)
+			// This function is used when we need to get the node
+			static inline mnode* get_node_labeled(mnode* n, ilabel lbl)
+			{
+				// TODO: Use perfect forwarding to wrap these checks
+#ifdef _STRICT_CHECKS
+				check_label(lbl, "get_node_labeled");
+#endif
+				return n->m_edges[lbl];
+			}
+
+			static inline mnode* get_node_at_index(mnode* n, ichild idx)
 			{
 #ifdef _STRICT_CHECKS
 				if (idx != CHILD_LEFT && idx != CHILD_RIGHT) {
 					throw foundation::foundation_exception("index invalid.", "bintree_ops::get_node_at_index");
 				}
 #endif
-				return n->m_children[idx];
+				return n->m_edges[idx];
 			}
 
-			static inline node* create_free_node()
+			static inline mnode* create_free_node()
 			{
-				node* ret = new node();
+				return new mnode();
 			}
 
-			static inline node* detach_node(node* p, ilabel lbl)
+			static inline mnode* detach_node(mnode* n, ilabel lbl)
 			{
 #ifdef _STRICT_CHECKS
-				if (lbl != CHILD_LEFT && lbl != CHILD_RIGHT) {
-					throw foundation::foundation_exception("index invalid.", "bintree_ops::detach_node");
+				check_label(lbl, "detach_node");
+#endif
+
+				// Determine who is the child and who is the parent
+				mnode* p = nullptr;
+				mnode* c = nullptr;
+				ilabel lbl_detach = LABEL_INVALID;
+				mnode* r_node = nullptr;  // the node to be returned
+				if (lbl == LABEL_PARENT)
+				{
+					r_node = p = n->m_edges[LABEL_PARENT];
+					c = n;
+
+					// Determine the label to detach
+					if (p->m_edges[LABEL_LEFT] == n) 
+					{
+						lbl_detach = LABEL_LEFT;
+					} 
+					else 
+					{
+						lbl_detach = LABEL_RIGHT;  // assuming that integrity has not been compromised
+					}
+				}
+				else 
+				{
+					r_node = c = n->m_edges[lbl];
+					p = n;
+					lbl_detach = lbl;
+				}
+
+#ifdef _STRICT_CHECKS
+				// Neither p nor c can be null
+				if (p == nullptr) {
+					throw foundation::foundation_exception("detaching nonexistent parent node", "bintree_ops::detach_node");
+				}
+
+				if (c == nullptr) {
+					throw foundation::foundation_exception("detaching nonexistent child node", "bintree_ops::detach_node");
 				}
 #endif
-				if (p->m_children[lbl] == nullptr)
-				{
-					return nullptr;
-				}
 
 				/* We have a problem.  Detaching a node affects two nodes.
-				 How can the sequence numbers be kept up to date at once?  They can't.
-				 So we cheat and increment them before we do anything.
-				 There is still of course a possibility, though eternally slim,
-				 that the wrong value will be registered if anyone tries to read the node.
-				 Fail-fast ought to be the rule.
+				How can the sequence numbers be kept up to date at once?  They can't.
+				So we cheat and increment them before we do anything.
+				There is still of course a possibility, though eternally slim,
+				that the wrong value will be registered if anyone tries to read the node.
+				Fail-fast ought to be the rule.
 				*/
-				node* r = p->m_children[lbl];
-
-				p->m_children[lbl]->m_sequence++;
 				p->m_sequence++;
+				c->m_sequence++;
 
-				p->m_children[lbl] = nullptr;
-				return r;
+				// Detach
+				p->m_edges[lbl_detach] = nullptr;
+				c->m_edges[LABEL_PARENT] = nullptr;
+	
+				return r_node;
 			}
 
-			static inline void attach_node(node* to, ilabel lbl, node* n)
+			static inline void attach_node(mnode* to, ilabel lbl, mnode* n)
 			{
+
 #ifdef _STRICT_CHECKS
-				if (to->m_children[lbl] != nullptr)
+				check_label(lbl, "attach_node");
+#endif
+				// Assign relationships
+				mnode* p = nullptr;
+				mnode* c = nullptr;
+				ilabel lbl_insert = LABEL_INVALID;
+
+				if (lbl == LABEL_PARENT) {
+					p = n;
+					c = to;
+				}
+				else 
 				{
-					throw foundation::foundation_exception("node with label exists", "bintree_ops::attach_node");
+					p = to;
+					c = n;
+					lbl_insert = lbl;
+				}
+
+				// Child cannot have any parents
+#ifdef _STRICT_CHECKS
+				if (c->m_edges[LABEL_PARENT]) 
+				{
+					throw foundation::foundation_exception("attaching an attached node",
+						"binary_tree_ops::attach_node");
 				}
 #endif
+				// Try to deduce lbl_insert if it is indeterminate
+				if (p->m_edges[LABEL_LEFT]) {
+					if (p->m_edges[LABEL_RIGHT]) {
+#ifdef _STRICT_CHECKS
+						throw foundation::foundation_exception("nowhere to attach node",
+							"binary_tree_ops::attach_node");
+#endif
+					}
+					else {
+						if (lbl_insert == LABEL_INVALID)
+							lbl_insert = LABEL_RIGHT;
+					}
+				}
+				else if (lbl_insert == LABEL_INVALID) {
+					if (!p->m_edges[LABEL_RIGHT]) {
+						throw foundation::foundation_exception("cannot deduce child label",
+							"binary_tree_ops::attach_node");
+					}
+					else {
+						lbl_insert = LABEL_LEFT;
+					}
+				}
+				
 				// Sequence numbers: as above
-				to->m_sequence++;
-				n->m_sequence++;  // as is proper
-				to->m_children[lbl] = n;
+				p->m_sequence++;
+				c->m_sequence++;  // as is proper
+
+				// Attach
+				p->m_edges[lbl_insert] = c;
+				c->m_edges[LABEL_PARENT] = p;
 			}
 
 			// Must be defined
-			static inline ilabel get_index_label(node* n, ichild idx) 
+			static inline ilabel get_index_label(mnode* n, ichild idx) 
 			{
-				return idx;
+				if (idx == CHILD_LEFT) {
+					return LABEL_LEFT;
+				}
+				else if (idx == CHILD_RIGHT) {
+					return LABEL_RIGHT;
+				}
+				else {
+					return LABEL_INVALID;
+				}
 			}
-			static inline ilabel get_parent_label(node* n)
-			{
 
-			}
-
-			static void print_node(std::ostream& os, node* n);
+			static void print_node(std::ostream& os, mnode* n);
 		};
 
 		// Build this up as a BST
-		void add_to_bst(long key, node*& in_out_root, node*& out_node);
+		template<class ThreadPolicy>
+		void add_to_bst(long key, node<ThreadPolicy>*& in_out_root, node<ThreadPolicy>*& out_node);
 
 	}
 

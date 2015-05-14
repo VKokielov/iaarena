@@ -88,7 +88,9 @@
     <ClInclude Include="TAnalytics.h" />
     <ClInclude Include="TAnalyticsUtils.h" />
     <ClInclude Include="targetver.h" />
+    <ClInclude Include="ThreadPolicy.h" />
     <ClInclude Include="Traversal.h" />
+    <ClInclude Include="TraversalIface.h" />
     <ClInclude Include="TreeUtils.h" />
   </ItemGroup>
   <ItemGroup>
