@@ -17,7 +17,8 @@ namespace print
 		{
 			dstruct::ttraversal::child_order_tr<TO> trav(root);
 
-			while (trav.depth() >= 0)
+			bool proceed = trav.depth () >= 0;
+			while (proceed)
 			{
 				// Just print out the node text pre-order
 				auto cur_node_index = trav.location(0);
@@ -33,7 +34,7 @@ namespace print
 					os << node_break;
 				}
 
-				trav.next();
+				proceed = trav.next();
 			}
 		}
 

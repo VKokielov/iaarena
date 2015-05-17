@@ -54,7 +54,6 @@ void bst_test()
 
 		// Construct!
 		dstruct::tconstruction::construct_at_end<l_tr>(root, initializer, condition);
-			
 	}
 
 	// Now print

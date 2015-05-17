@@ -79,9 +79,13 @@ namespace dstruct
 
 			bool next()
 			{
-				bool has_next = follow_arrow() != nullptr;
+				if (!m_next_node) {
+					return false;  // already at end, pointing at oblivion
+				}
+
+				follow_arrow();
 				compute_arrow();
-				return has_next;  // this is for now
+				return m_next_node != nullptr;
 			}
 		private:
 			void compute_arrow()
@@ -148,7 +152,8 @@ namespace dstruct
 				m_failfast(failfast)
 			{
 				if (root) {
-					push_new_node(root);  // root is now the current node and depth is 0
+					push_new_node(root);  // root is now the current node and depth is 0.  Guaranteed.
+					compute_arrow();
 				}
 				else {
 					m_depth = -2;  // trivial
@@ -161,51 +166,75 @@ namespace dstruct
 			bool is_trivial() const { return m_depth == -2;  }
 			node_label_t get_arrow() const 
 			{
-				node_state_t& cur = m_nstack[m_depth];
-				if (TO::is_index_final(cur.m_node, cur.m_next_index)) {
-					return TO::sm_parent_lbl;
-				}
-				else {
-					return TO::get_index_label(cur.m_node, cur.m_next_index);
-				}
+				return m_arrow;
 			}
 
 			void refresh_arrow()
-			{
-				// Refresh the node pointed to by the arrow
-			}
+			{ }
 
 			bool next()
 			{
 				fail_fast();  // have to; what if the children have changed?
 
+				if (m_arrow == TO::sm_invalid_lbl) {
+					return false;
+				}
+
+				follow_arrow(); // and compute the next one
+
+				return !(m_depth == 0 && m_arrow == TO::sm_parent_lbl);
+			}
+		private:
+			void follow_arrow()
+			{
+				// In this case, an arrow can point to a child or to the parent.
+				node_state_t& cur_old = m_nstack[m_depth];
+
+				bool returning = false;
+				if (m_arrow == TO::sm_parent_lbl) {
+					pop_node();
+					returning = true;
+				}
+				else {
+					push_new_node(TO::get_node_labeled(cur_old.m_node, m_arrow));
+				}
+
+				node_state_t& cur = m_nstack[m_depth];
+				// Get next index and compute the arrow from it
+				if (returning) {
+					TO::move_index(cur.m_index, cur.m_next_index);
+					TO::increment_index(cur.m_node, cur.m_next_index);
+				}
+
+				// Now compute the arrow
+				if (m_depth >= 0) {
+					compute_arrow();
+				} else {  // we went too far
+					m_arrow = TO::sm_invalid_lbl;
+				}
+			}
+
+			void compute_arrow()
+			{
 				// Fundamentally a three way operation.
 				// If we are coming *down*, we need to keep pushing and pushing till we 
 				// can go no further, when we turn around and walk up.
-				
+
 				// If we are walking up, we increment the state until we bump up against
 				// the limit, then walk up again.
 
 				// We store the "next index" in the state and convert it to an arrow on demand.
 				// Here we use it to move
-
 				node_state_t& cur = m_nstack[m_depth];
-
-				cur.m_index = cur.m_next_index;  // this was the arrow
-				if (TO::is_index_final(cur.m_node, cur.m_index)) {
-					// The final index represents the parent arrow.  Move up
-					pop_node();
+				if (TO::is_index_final(cur.m_node, cur.m_next_index))
+				{
+					m_arrow = TO::sm_parent_lbl;
 				}
 				else {
-					push_new_node(TO::get_node_at_index(cur.m_node, cur.m_index));
+					m_arrow = TO::get_index_label(cur.m_node, cur.m_next_index);
 				}
-
-				// Compute the next index
-				compute_arrow();
-
-				return m_depth != -1;
 			}
-		private:
+
 			void push_new_node(node_handle_t nh)
 			{
 				m_depth++;
@@ -225,22 +254,15 @@ namespace dstruct
 			void reset_obj(node_state_t& o, node_handle_t nh)
 			{
 				TO::init_child_index (nh, o.m_index);
+				TO::init_child_index(nh, o.m_next_index);  // we will now increment this
+				TO::increment_index(nh, o.m_next_index);  // guaranteed to work at least once
 				// Capture the sequence number of the node
 				o.m_seq = TO::get_seq(nh);
 				o.m_node = nh;
 			}
 
-			void compute_arrow()
-			{
-				node_state_t& cur = m_nstack[m_depth];
-				node_index_t ni = cur.m_index;
-				// Remember, an arrow points along an edge.  
-				// For general graphs, this will be harder
-				TO::increment_index(cur.m_node, ni);  // from "one before start" to "first node" -- or "end"
-				cur.m_next_index = ni;
-			}
-
 			std::vector<node_state_t> m_nstack;
+			node_label_t m_arrow;
 			int m_depth;
 			bool m_failfast;
 		};

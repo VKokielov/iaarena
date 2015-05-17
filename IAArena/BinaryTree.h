@@ -309,6 +309,16 @@ namespace dstruct
 				}
 			}
 
+			// Trivial copy/move
+			static void copy_index(ichild& to, ichild& from)
+			{
+				to = from;
+			}
+			
+			static void move_index(ichild& to, ichild& from)
+			{
+				to = from;
+			}
 			static void print_node(std::ostream& os, mnode* n);
 		};
 
